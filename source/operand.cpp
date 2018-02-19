@@ -1,62 +1,66 @@
 // Copyright (c) 2015-2016 The Khronos Group Inc.
 //
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and/or associated documentation files (the
-// "Materials"), to deal in the Materials without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Materials, and to
-// permit persons to whom the Materials are furnished to do so, subject to
-// the following conditions:
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Materials.
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
-// MODIFICATIONS TO THIS FILE MAY MEAN IT NO LONGER ACCURATELY REFLECTS
-// KHRONOS STANDARDS. THE UNMODIFIED, NORMATIVE VERSIONS OF KHRONOS
-// SPECIFICATIONS AND HEADER INFORMATION ARE LOCATED AT
-//    https://www.khronos.org/registry/
-//
-// THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-// IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-// CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-// TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-// MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "operand.h"
 
 #include <assert.h>
 #include <string.h>
+#include <algorithm>
 
 #include "macro.h"
 
-// Pull in operand info tables automatically generated from JSON grammar.
-namespace v1_0 {
 #include "operand.kinds-1.0.inc"
-}  // namespace v1_0
-namespace v1_1 {
 #include "operand.kinds-1.1.inc"
-}  // namespace v1_1
+#include "operand.kinds-1.2.inc"
+
+static const spv_operand_table_t kTable_1_0 = {
+    ARRAY_SIZE(pygen_variable_OperandInfoTable_1_0),
+    pygen_variable_OperandInfoTable_1_0};
+static const spv_operand_table_t kTable_1_1 = {
+    ARRAY_SIZE(pygen_variable_OperandInfoTable_1_1),
+    pygen_variable_OperandInfoTable_1_1};
+static const spv_operand_table_t kTable_1_2 = {
+    ARRAY_SIZE(pygen_variable_OperandInfoTable_1_2),
+    pygen_variable_OperandInfoTable_1_2};
 
 spv_result_t spvOperandTableGet(spv_operand_table* pOperandTable,
                                 spv_target_env env) {
   if (!pOperandTable) return SPV_ERROR_INVALID_POINTER;
 
-  static const spv_operand_table_t table_1_0 = {
-      ARRAY_SIZE(v1_0::pygen_variable_OperandInfoTable),
-      v1_0::pygen_variable_OperandInfoTable};
-  static const spv_operand_table_t table_1_1 = {
-      ARRAY_SIZE(v1_1::pygen_variable_OperandInfoTable),
-      v1_1::pygen_variable_OperandInfoTable};
-
   switch (env) {
     case SPV_ENV_UNIVERSAL_1_0:
     case SPV_ENV_VULKAN_1_0:
-      *pOperandTable = &table_1_0;
+    case SPV_ENV_OPENCL_1_2:
+    case SPV_ENV_OPENCL_EMBEDDED_1_2:
+    case SPV_ENV_OPENCL_2_0:
+    case SPV_ENV_OPENCL_EMBEDDED_2_0:
+    case SPV_ENV_OPENCL_2_1:
+    case SPV_ENV_OPENCL_EMBEDDED_2_1:
+    case SPV_ENV_OPENGL_4_0:
+    case SPV_ENV_OPENGL_4_1:
+    case SPV_ENV_OPENGL_4_2:
+    case SPV_ENV_OPENGL_4_3:
+    case SPV_ENV_OPENGL_4_5:
+      *pOperandTable = &kTable_1_0;
       return SPV_SUCCESS;
     case SPV_ENV_UNIVERSAL_1_1:
-      *pOperandTable = &table_1_1;
+      *pOperandTable = &kTable_1_1;
+      return SPV_SUCCESS;
+    case SPV_ENV_UNIVERSAL_1_2:
+    case SPV_ENV_OPENCL_2_2:
+    case SPV_ENV_OPENCL_EMBEDDED_2_2:
+      *pOperandTable = &kTable_1_2;
       return SPV_SUCCESS;
   }
   assert(0 && "Unknown spv_target_env in spvOperandTableGet()");
@@ -196,6 +200,16 @@ const char* spvOperandTypeStr(spv_operand_type_t type) {
       return "image";
     case SPV_OPERAND_TYPE_OPTIONAL_CIV:
       return "context-insensitive value";
+    case SPV_OPERAND_TYPE_DEBUG_INFO_FLAGS:
+      return "debug info flags";
+    case SPV_OPERAND_TYPE_DEBUG_BASE_TYPE_ATTRIBUTE_ENCODING:
+      return "debug base type encoding";
+    case SPV_OPERAND_TYPE_DEBUG_COMPOSITE_TYPE:
+      return "debug composite type";
+    case SPV_OPERAND_TYPE_DEBUG_TYPE_QUALIFIER:
+      return "debug type qualifier";
+    case SPV_OPERAND_TYPE_DEBUG_OPERATION:
+      return "debug operation";
 
     // The next values are for values returned from an instruction, not actually
     // an operand.  So the specific strings don't matter.  But let's add them
@@ -214,34 +228,91 @@ const char* spvOperandTypeStr(spv_operand_type_t type) {
   return "unknown";
 }
 
-void spvPrependOperandTypes(const spv_operand_type_t* types,
-                            spv_operand_pattern_t* pattern) {
+void spvPushOperandTypes(const spv_operand_type_t* types,
+                         spv_operand_pattern_t* pattern) {
   const spv_operand_type_t* endTypes;
   for (endTypes = types; *endTypes != SPV_OPERAND_TYPE_NONE; ++endTypes)
     ;
-  pattern->insert(pattern->begin(), types, endTypes);
+  while (endTypes-- != types) {
+    pattern->push_back(*endTypes);
+  }
 }
 
-void spvPrependOperandTypesForMask(const spv_operand_table operandTable,
-                                   const spv_operand_type_t type,
-                                   const uint32_t mask,
-                                   spv_operand_pattern_t* pattern) {
-  // Scan from highest bits to lowest bits because we will prepend in LIFO
-  // fashion, and we need the operands for lower order bits to appear first.
-  for (uint32_t candidate_bit = (1u << 31u); candidate_bit; candidate_bit >>= 1) {
+void spvPushOperandTypesForMask(const spv_operand_table operandTable,
+                                const spv_operand_type_t type,
+                                const uint32_t mask,
+                                spv_operand_pattern_t* pattern) {
+  // Scan from highest bits to lowest bits because we will append in LIFO
+  // fashion, and we need the operands for lower order bits to be consumed first
+  for (uint32_t candidate_bit = (1u << 31u); candidate_bit;
+       candidate_bit >>= 1) {
     if (candidate_bit & mask) {
       spv_operand_desc entry = nullptr;
       if (SPV_SUCCESS == spvOperandTableValueLookup(operandTable, type,
                                                     candidate_bit, &entry)) {
-        spvPrependOperandTypes(entry->operandTypes, pattern);
+        spvPushOperandTypes(entry->operandTypes, pattern);
       }
     }
   }
 }
 
+bool spvOperandIsConcrete(spv_operand_type_t type) {
+  if (spvIsIdType(type) || spvOperandIsConcreteMask(type)) {
+    return true;
+  }
+  switch (type) {
+    case SPV_OPERAND_TYPE_LITERAL_INTEGER:
+    case SPV_OPERAND_TYPE_EXTENSION_INSTRUCTION_NUMBER:
+    case SPV_OPERAND_TYPE_SPEC_CONSTANT_OP_NUMBER:
+    case SPV_OPERAND_TYPE_TYPED_LITERAL_NUMBER:
+    case SPV_OPERAND_TYPE_LITERAL_STRING:
+    case SPV_OPERAND_TYPE_SOURCE_LANGUAGE:
+    case SPV_OPERAND_TYPE_EXECUTION_MODEL:
+    case SPV_OPERAND_TYPE_ADDRESSING_MODEL:
+    case SPV_OPERAND_TYPE_MEMORY_MODEL:
+    case SPV_OPERAND_TYPE_EXECUTION_MODE:
+    case SPV_OPERAND_TYPE_STORAGE_CLASS:
+    case SPV_OPERAND_TYPE_DIMENSIONALITY:
+    case SPV_OPERAND_TYPE_SAMPLER_ADDRESSING_MODE:
+    case SPV_OPERAND_TYPE_SAMPLER_FILTER_MODE:
+    case SPV_OPERAND_TYPE_SAMPLER_IMAGE_FORMAT:
+    case SPV_OPERAND_TYPE_IMAGE_CHANNEL_ORDER:
+    case SPV_OPERAND_TYPE_IMAGE_CHANNEL_DATA_TYPE:
+    case SPV_OPERAND_TYPE_FP_ROUNDING_MODE:
+    case SPV_OPERAND_TYPE_LINKAGE_TYPE:
+    case SPV_OPERAND_TYPE_ACCESS_QUALIFIER:
+    case SPV_OPERAND_TYPE_FUNCTION_PARAMETER_ATTRIBUTE:
+    case SPV_OPERAND_TYPE_DECORATION:
+    case SPV_OPERAND_TYPE_BUILT_IN:
+    case SPV_OPERAND_TYPE_GROUP_OPERATION:
+    case SPV_OPERAND_TYPE_KERNEL_ENQ_FLAGS:
+    case SPV_OPERAND_TYPE_KERNEL_PROFILING_INFO:
+    case SPV_OPERAND_TYPE_CAPABILITY:
+    case SPV_OPERAND_TYPE_DEBUG_BASE_TYPE_ATTRIBUTE_ENCODING:
+    case SPV_OPERAND_TYPE_DEBUG_COMPOSITE_TYPE:
+    case SPV_OPERAND_TYPE_DEBUG_TYPE_QUALIFIER:
+    case SPV_OPERAND_TYPE_DEBUG_OPERATION:
+      return true;
+    default:
+      break;
+  }
+  return false;
+}
+
 bool spvOperandIsConcreteMask(spv_operand_type_t type) {
-  return SPV_OPERAND_TYPE_FIRST_CONCRETE_MASK_TYPE <= type &&
-         type <= SPV_OPERAND_TYPE_LAST_CONCRETE_MASK_TYPE;
+  switch (type) {
+    case SPV_OPERAND_TYPE_IMAGE:
+    case SPV_OPERAND_TYPE_FP_FAST_MATH_MODE:
+    case SPV_OPERAND_TYPE_SELECTION_CONTROL:
+    case SPV_OPERAND_TYPE_LOOP_CONTROL:
+    case SPV_OPERAND_TYPE_FUNCTION_CONTROL:
+    case SPV_OPERAND_TYPE_MEMORY_ACCESS:
+    case SPV_OPERAND_TYPE_DEBUG_INFO_FLAGS:
+      return true;
+    default:
+      break;
+  }
+  return false;
 }
 
 bool spvOperandIsOptional(spv_operand_type_t type) {
@@ -258,24 +329,25 @@ bool spvExpandOperandSequenceOnce(spv_operand_type_t type,
                                   spv_operand_pattern_t* pattern) {
   switch (type) {
     case SPV_OPERAND_TYPE_VARIABLE_ID:
-      pattern->insert(pattern->begin(), {SPV_OPERAND_TYPE_OPTIONAL_ID, type});
+      pattern->push_back(type);
+      pattern->push_back(SPV_OPERAND_TYPE_OPTIONAL_ID);
       return true;
     case SPV_OPERAND_TYPE_VARIABLE_LITERAL_INTEGER:
-      pattern->insert(pattern->begin(),
-                      {SPV_OPERAND_TYPE_OPTIONAL_LITERAL_INTEGER, type});
+      pattern->push_back(type);
+      pattern->push_back(SPV_OPERAND_TYPE_OPTIONAL_LITERAL_INTEGER);
       return true;
     case SPV_OPERAND_TYPE_VARIABLE_LITERAL_INTEGER_ID:
       // Represents Zero or more (Literal number, Id) pairs,
       // where the literal number must be a scalar integer.
-      pattern->insert(pattern->begin(),
-                      {SPV_OPERAND_TYPE_OPTIONAL_TYPED_LITERAL_INTEGER,
-                       SPV_OPERAND_TYPE_ID, type});
+      pattern->push_back(type);
+      pattern->push_back(SPV_OPERAND_TYPE_ID);
+      pattern->push_back(SPV_OPERAND_TYPE_OPTIONAL_TYPED_LITERAL_INTEGER);
       return true;
     case SPV_OPERAND_TYPE_VARIABLE_ID_LITERAL_INTEGER:
       // Represents Zero or more (Id, Literal number) pairs.
-      pattern->insert(pattern->begin(),
-                      {SPV_OPERAND_TYPE_OPTIONAL_ID,
-                       SPV_OPERAND_TYPE_LITERAL_INTEGER, type});
+      pattern->push_back(type);
+      pattern->push_back(SPV_OPERAND_TYPE_LITERAL_INTEGER);
+      pattern->push_back(SPV_OPERAND_TYPE_OPTIONAL_ID);
       return true;
     default:
       break;
@@ -288,23 +360,23 @@ spv_operand_type_t spvTakeFirstMatchableOperand(
   assert(!pattern->empty());
   spv_operand_type_t result;
   do {
-    result = pattern->front();
-    pattern->pop_front();
+    result = pattern->back();
+    pattern->pop_back();
   } while (spvExpandOperandSequenceOnce(result, pattern));
   return result;
 }
 
 spv_operand_pattern_t spvAlternatePatternFollowingImmediate(
     const spv_operand_pattern_t& pattern) {
-  spv_operand_pattern_t alternatePattern;
-  for (const auto& operand : pattern) {
-    if (operand == SPV_OPERAND_TYPE_RESULT_ID) {
-      alternatePattern.push_back(operand);
-      alternatePattern.push_back(SPV_OPERAND_TYPE_OPTIONAL_CIV);
-      return alternatePattern;
-    }
-    alternatePattern.push_back(SPV_OPERAND_TYPE_OPTIONAL_CIV);
+  auto it =
+      std::find(pattern.crbegin(), pattern.crend(), SPV_OPERAND_TYPE_RESULT_ID);
+  if (it != pattern.crend()) {
+    spv_operand_pattern_t alternatePattern(it - pattern.crbegin() + 2,
+                                           SPV_OPERAND_TYPE_OPTIONAL_CIV);
+    alternatePattern[1] = SPV_OPERAND_TYPE_RESULT_ID;
+    return alternatePattern;
   }
+
   // No result-id found, so just expect CIVs.
   return {SPV_OPERAND_TYPE_OPTIONAL_CIV};
 }
@@ -320,4 +392,62 @@ bool spvIsIdType(spv_operand_type_t type) {
     default:
       return false;
   }
+}
+
+std::function<bool(unsigned)> spvOperandCanBeForwardDeclaredFunction(
+    SpvOp opcode) {
+  std::function<bool(unsigned index)> out;
+  switch (opcode) {
+    case SpvOpExecutionMode:
+    case SpvOpEntryPoint:
+    case SpvOpName:
+    case SpvOpMemberName:
+    case SpvOpSelectionMerge:
+    case SpvOpDecorate:
+    case SpvOpMemberDecorate:
+    case SpvOpTypeStruct:
+    case SpvOpBranch:
+    case SpvOpLoopMerge:
+      out = [](unsigned) { return true; };
+      break;
+    case SpvOpGroupDecorate:
+    case SpvOpGroupMemberDecorate:
+    case SpvOpBranchConditional:
+    case SpvOpSwitch:
+      out = [](unsigned index) { return index != 0; };
+      break;
+
+    case SpvOpFunctionCall:
+      // The Function parameter.
+      out = [](unsigned index) { return index == 2; };
+      break;
+
+    case SpvOpPhi:
+      out = [](unsigned index) { return index > 1; };
+      break;
+
+    case SpvOpEnqueueKernel:
+      // The Invoke parameter.
+      out = [](unsigned index) { return index == 8; };
+      break;
+
+    case SpvOpGetKernelNDrangeSubGroupCount:
+    case SpvOpGetKernelNDrangeMaxSubGroupSize:
+      // The Invoke parameter.
+      out = [](unsigned index) { return index == 3; };
+      break;
+
+    case SpvOpGetKernelWorkGroupSize:
+    case SpvOpGetKernelPreferredWorkGroupSizeMultiple:
+      // The Invoke parameter.
+      out = [](unsigned index) { return index == 2; };
+      break;
+    case SpvOpTypeForwardPointer:
+      out = [](unsigned index) { return index == 0; };
+      break;
+    default:
+      out = [](unsigned) { return false; };
+      break;
+  }
+  return out;
 }
