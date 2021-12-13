@@ -19,6 +19,7 @@
 #include <cassert>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <string>
 #include <tuple>
